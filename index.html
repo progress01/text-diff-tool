@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文字與標點分離比對工具 (幽靈定位版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/diff@5.1.0/dist/diff.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; }
+        
+        /* 差異樣式：刪除 */
+        .diff-del {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            text-decoration: line-through;
+            border-bottom: 2px solid #ef4444;
+            padding: 0 1px;
+        }
+        
+        /* 差異樣式：新增 */
+        .diff-add {
+            background-color: #dcfce7;
+            color: #15803d;
+            font-weight: bold;
+            border: 2px solid #22c55e;
+            padding: 0 1px;
+            box-shadow: 0 1px 3px rgba(34, 197, 94, 0.3);
+        }
+
+        /* 幽靈文字模式專用樣式 */
+        .ghost-text {
+            color: #cbd5e1; /* 非常淡的灰色，作為背景參考 */
+        }
+        .highlight-punct {
+            color: #334155; /* 標點符號保持深色，突顯出來 */
+            font-weight: bold;
+        }
+        
+        /* 讓空白符號現形 */
+        .visible-space::before {
+            content: '·';
+            color: #94a3b8;
+        }
+        
+        /* 滾動條美化 */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden text-slate-800">
+
+    <header class="bg-white shadow-sm border-b border-slate-200 z-10 shrink-0">
+        <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <i data-lucide="scan-line" class="text-blue-600 w-5 h-5"></i>
+                <h1 class="font-bold text-slate-700">文稿比對助手 <span class="text-xs font-normal text-slate-400 ml-2">雙模式分離檢查</span></h1>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="loadSample()" class="text-sm text-slate-500 hover:text-blue-600 flex items-center gap-1">
+                    <i data-lucide="flask-conical" class="w-4 h-4"></i> 載入全形半形範例
+                </button>
+                <button onclick="clearAll()" class="text-sm text-red-400 hover:text-red-600 flex items-center gap-1">
+                    <i data-lucide="trash" class="w-4 h-4"></i> 清空
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex flex-col lg:flex-row overflow-hidden max-w-7xl mx-auto w-full">
+        
+        <div class="flex-1 flex flex-col p-3 gap-3 overflow-y-auto lg:border-r border-slate-200 bg-white min-w-[320px]">
+            <div class="flex-1 flex flex-col min-h-[120px]">
+                <div class="flex justify-between text-xs font-bold text-slate-500 mb-1 px-1">
+                    <span>原始文稿 (Old)</span>
+                    <span id="count-old" class="font-normal bg-slate-100 px-2 rounded">0 字</span>
+                </div>
+                <textarea id="oldText" class="flex-1 w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-sm font-mono leading-relaxed" placeholder="貼上原始稿件..."></textarea>
+            </div>
+            <div class="flex-1 flex flex-col min-h-[120px]">
+                <div class="flex justify-between text-xs font-bold text-slate-500 mb-1 px-1">
+                    <span>網站上架版 (New)</span>
+                    <span id="count-new" class="font-normal bg-slate-100 px-2 rounded">0 字</span>
+                </div>
+                <textarea id="newText" class="flex-1 w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-sm font-mono leading-relaxed" placeholder="貼上網站內容..."></textarea>
+            </div>
+            <button onclick="compareText()" class="w-full bg-slate-800 hover:bg-black text-white py-2.5 rounded shadow flex justify-center gap-2 transition-transform active:scale-[0.99]">
+                <i data-lucide="check-circle-2" class="w-5 h-5"></i> 執行雙重比對
+            </button>
+        </div>
+
+        <div class="flex-1 flex flex-col h-full overflow-hidden bg-slate-50">
+            
+            <div class="h-1/3 flex flex-col border-b border-slate-200 min-h-[150px]">
+                <div class="bg-blue-50 px-3 py-2 border-b border-blue-100 flex justify-between items-center sticky top-0">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded">1. 純文字核對</span>
+                        <span class="text-xs text-blue-800 opacity-70">忽略所有標點與空白，確保文字正確</span>
+                    </div>
+                    <span class="text-xs font-mono text-blue-600" id="text-sim">相似度 0%</span>
+                </div>
+                <div class="flex-1 p-4 overflow-y-auto bg-white">
+                    <div id="text-result" class="text-sm text-slate-600 leading-7 break-all whitespace-pre-wrap">
+                        <div class="text-center text-slate-300 text-xs py-4">等待比對...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 flex flex-col min-h-[200px]">
+                <div class="bg-amber-50 px-3 py-2 border-b border-amber-100 flex justify-between items-center sticky top-0">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-amber-600 text-white text-xs font-bold px-2 py-0.5 rounded">2. 標點與格式定位</span>
+                        <span class="text-xs text-amber-900 opacity-70">專查：全形/半形/空白/標點</span>
+                    </div>
+                </div>
+                <div class="flex-1 p-4 overflow-y-auto bg-white relative">
+                    <div class="absolute top-4 right-4 flex flex-col gap-1 text-[10px] text-slate-400 bg-white/90 p-2 border rounded shadow-sm z-10">
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 bg-slate-300"></span> 文字(忽略)</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 bg-slate-700"></span> 標點(關注)</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 border border-green-500"></span> 格式差異</span>
+                    </div>
+
+                    <div id="format-result" class="font-mono text-sm leading-8 break-all whitespace-pre-wrap">
+                        <div class="text-center text-slate-300 text-xs py-10">
+                            <i data-lucide="search" class="inline mb-1 w-8 h-8 opacity-20"></i><br>
+                            這裡會淡化文字，突顯標點與格式差異<br>
+                            並用「·」顯示空白位置
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+
+        const oldInput = document.getElementById('oldText');
+        const newInput = document.getElementById('newText');
+        const textResult = document.getElementById('text-result');
+        const formatResult = document.getElementById('format-result');
+        const textSimEl = document.getElementById('text-sim');
+        const countOldEl = document.getElementById('count-old');
+        const countNewEl = document.getElementById('count-new');
+
+        oldInput.addEventListener('input', () => updateCount(oldInput, countOldEl));
+        newInput.addEventListener('input', () => updateCount(newInput, countNewEl));
+
+        function updateCount(input, display) {
+            display.textContent = `${input.value.length} 字`;
+        }
+
+        function loadSample() {
+            oldInput.value = "親愛的用戶您好：\n這是測試文稿，確認「全形標點」的位置。\n請注意：這裡有一個半形空格( )需要檢查。";
+            newInput.value = "親愛的用戶您好:\n這是測試文稿，確認「全形標點」的位置。\n請注意：這裡有一個全形空格(　)需要檢查。"; 
+            // 差異點：
+            // 1. 第一行冒號：全形 vs 半形
+            // 2. 第三行空格：半形 vs 全形
+            updateCount(oldInput, countOldEl);
+            updateCount(newInput, countNewEl);
+            compareText();
+        }
+
+        function clearAll() {
+            oldInput.value = '';
+            newInput.value = '';
+            resetResults();
+            updateCount(oldInput, countOldEl);
+            updateCount(newInput, countNewEl);
+        }
+
+        function resetResults() {
+            const placeholder = '<div class="text-center text-slate-300 text-xs py-4">等待比對...</div>';
+            textResult.innerHTML = placeholder;
+            formatResult.innerHTML = '<div class="text-center text-slate-300 text-xs py-10">這裡會淡化文字...</div>';
+            textSimEl.textContent = '相似度 0%';
+        }
+
+        // Logic 1: Remove all non-text for Content Check
+        function getPureText(str) {
+            const noSpace = str.replace(/[\s\u3000]/g, '');
+            // Keep only CJK, English, Numbers
+            const isTextChar = /[a-zA-Z0-9\u4e00-\u9fa5\u3400-\u4dbf\uF900-\uFAFF]/;
+            let res = '';
+            for (const char of noSpace) {
+                if (isTextChar.test(char)) res += char;
+            }
+            return res;
+        }
+
+        // Regex to identify if a char is "Content Text" (to be dimmed) or "Punctuation" (to be highlighted)
+        // Includes CJK ranges and standard alphanumeric
+        const textCharRegex = /[a-zA-Z0-9\u4e00-\u9fa5\u3400-\u4dbf\uF900-\uFAFF]/;
+
+        function compareText() {
+            if (typeof Diff === 'undefined') return;
+
+            const rawOld = oldInput.value;
+            const rawNew = newInput.value;
+            if (!rawOld && !rawNew) { resetResults(); return; }
+
+            // --- 1. Pure Text Comparison (Top Box) ---
+            const pureOld = getPureText(rawOld);
+            const pureNew = getPureText(rawNew);
+            renderPureDiff(pureOld, pureNew, textResult);
+            
+            // Similarity
+            const sim = calculateSimilarity(pureOld, pureNew);
+            textSimEl.textContent = `相似度 ${sim}%`;
+
+            // --- 2. Format & Punctuation Ghost View (Bottom Box) ---
+            // We use raw strings here to catch space/width diffs
+            renderGhostDiff(rawOld, rawNew, formatResult);
+        }
+
+        function renderPureDiff(t1, t2, container) {
+            const diff = Diff.diffChars(t1, t2);
+            const fragment = document.createDocumentFragment();
+            diff.forEach(part => {
+                const span = document.createElement('span');
+                if (part.added) span.className = 'diff-add';
+                else if (part.removed) span.className = 'diff-del';
+                else span.className = 'text-slate-600';
+                span.textContent = part.value;
+                fragment.appendChild(span);
+            });
+            container.innerHTML = '';
+            container.appendChild(fragment);
+        }
+
+        function renderGhostDiff(t1, t2, container) {
+            const diff = Diff.diffChars(t1, t2); // Strict diff
+            const fragment = document.createDocumentFragment();
+
+            diff.forEach(part => {
+                // Handle Diffs (Add/Remove) - ALWAYS Highlighted
+                if (part.added || part.removed) {
+                    const span = document.createElement('span');
+                    span.className = part.added ? 'diff-add' : 'diff-del';
+                    // Make spaces visible in diffs
+                    span.textContent = part.value;
+                    // Special visual for spaces inside diffs
+                    if (part.value.match(/[\s\u3000]/)) {
+                        span.classList.add('visible-space');
+                    }
+                    fragment.appendChild(span);
+                } 
+                // Handle Unchanged Text - Apply Ghost Logic
+                else {
+                    // We need to split unchanged text char by char to color Text vs Punct differently
+                    const chars = part.value.split('');
+                    chars.forEach(char => {
+                        const span = document.createElement('span');
+                        if (textCharRegex.test(char)) {
+                            span.className = 'ghost-text'; // Dim text content
+                        } else {
+                            span.className = 'highlight-punct'; // Highlight structure/punct
+                            if (char.match(/[\s\u3000]/)) span.classList.add('visible-space'); // Show spaces
+                        }
+                        span.textContent = char;
+                        fragment.appendChild(span);
+                    });
+                }
+            });
+
+            container.innerHTML = '';
+            container.appendChild(fragment);
+        }
+
+        function calculateSimilarity(s1, s2) {
+            if (s1 === s2) return 100;
+            if (!s1 || !s2) return 0;
+            const longer = s1.length > s2.length ? s1 : s2;
+            const shorter = s1.length > s2.length ? s2 : s1;
+            const dist = levenshtein(longer, shorter);
+            return Math.floor((1.0 - dist / longer.length) * 100);
+        }
+
+        function levenshtein(s, t) {
+            if (s === t) return 0;
+            var n = s.length, m = t.length;
+            var p = new Uint16Array(n);
+            var u = new Uint32Array(n);
+            for (var y = 0; y < n;) u[y] = s.charCodeAt(y), p[y] = ++y;
+            var x = 0;
+            for (; (x + 3) < m; x += 4) {
+                var e1 = t.charCodeAt(x), e2 = t.charCodeAt(x+1), e3 = t.charCodeAt(x+2), e4 = t.charCodeAt(x+3);
+                var c = x, b = x + 1, d = x + 2, g = x + 3, h = x + 4;
+                for (var y = 0; y < n; y++) {
+                    var a = p[y];
+                    c = (a < c || b < c) ? (a > b ? b + 1 : a + 1) : (e1 !== u[y] ? c + 1 : c);
+                    b = (c < b || d < b) ? (c > d ? d + 1 : c + 1) : (e2 !== u[y] ? b + 1 : b);
+                    d = (b < d || g < d) ? (b > g ? g + 1 : b + 1) : (e3 !== u[y] ? d + 1 : d);
+                    g = (d < g || h < g) ? (d > h ? h + 1 : d + 1) : (e4 !== u[y] ? g + 1 : g);
+                    p[y] = h = g; g = d; d = b; b = c; c = a;
+                }
+            }
+            for (; x < m; x++) {
+                var e = t.charCodeAt(x), c = x, d = x + 1;
+                for (var y = 0; y < n; y++) {
+                    var a = p[y];
+                    d = (a < c || d < c) ? (a > d ? d + 1 : a + 1) : (e !== u[y] ? c + 1 : c);
+                    p[y] = d; c = a;
+                }
+            }
+            return p[n - 1];
+        }
+    </script>
+</body>
+</html>
